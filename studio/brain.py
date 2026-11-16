@@ -7,7 +7,7 @@ import time
 
 import numpy as np
 
-from . import ai, config, usage, roman
+from . import ai, config, games, usage, roman
 
 WINDOW_SEC, OVERLAP_SEC = 15 * 60, 60
 
@@ -80,6 +80,17 @@ Never put links, @handles, phone numbers, or "visit / buy / subscribe" calls in 
 
 CATEGORIES = {"funny", "fail", "clutch", "rage", "shock", "take", "story", "other"}
 _CTRL = re.compile(r"[\x00-\x1f\x7f]+")
+
+GAME_RULES = """
+This stream is {game}. Pick the moments that only mean something with that game in mind:
+- A play, a death, a jump scare, a glitch, a discovery, or the streamer reacting to one.
+- The hook is what was said at that moment, or, if nothing was said, the name of what happened in
+  two or three words ("1 VS 3", "THE SHOT", "HE GOT ME", "CLUTCH"). Never a sentence that needs
+  the game explained.
+- The title names the game when the clip is about it.
+- The hashtags include {tags}.
+"""
+
 _LINKS = re.compile(r"(?i)(?:https?://|www\.)\S+|\b[\w-]+\.(?:com|net|org|io|gg|tv|ly|me|co|xyz|app|link|shop)\b\S*|@\w+")
 
 
@@ -107,11 +118,15 @@ def _fmt(lines):
                      for l in lines)
 
 
-def _tidy(c, s, e):
+def _tidy(c, s, e, game=None):
     """Whatever the AI answered, only this shape ever leaves here: clamped numbers, short link-free text."""
     cat = str(c.get("category", "other")).lower()
     tags = c.get("hashtags") if isinstance(c.get("hashtags"), list) else []
     tags = [re.sub(r"\W", "", str(h))[:30] for h in tags if isinstance(h, (str, int))]
+    # The tags of the game are put on every post, whatever the AI wrote: people search for the game.
+    for t in games.tags_of(game):
+        if t and t.lower() not in {x.lower() for x in tags}:
+            tags.append(t)
     words = c.get("highlight_words") if isinstance(c.get("highlight_words"), list) else []
     return {
         "start": s, "end": e, "score": max(0, min(100, int(_num(c.get("score"))))),
@@ -245,7 +260,15 @@ def fallback_by_loudness(db, words, n, max_len, duration):
     return picks
 
 
-def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=15, max_len=60, log=print):
+def _game_rules(game):
+    """The extra rules for a known game, or nothing."""
+    if not game:
+        return ""
+    tags = ", ".join(games.tags_of(game)) or "the game's own tags"
+    return GAME_RULES.format(game=games.name_of(game) or str(game)[:40], tags=tags)
+
+
+def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=15, max_len=60, log=print, game=None):
     z = loud_zscore(db)
     lines = make_lines(words, z)
     if not lines:
@@ -257,11 +280,13 @@ def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=
         windows.append((t, min(duration, t + WINDOW_SEC)))
         t += WINDOW_SEC - OVERLAP_SEC
     per_window = max(2, min(8, int(np.ceil(max_clips * 1.5 / len(windows))) + 1))
+    extra = _game_rules(game)
     for a, b in windows:
         chunk = [l for l in lines if a <= l["s"] < b]
         if len(chunk) < 3:
             continue
         prompt = (HEAD.format(title=_safe(title) or "unknown", uploader=_safe(uploader) or "unknown", n=per_window)
+                  + extra
                   + RULES.format(min_len=min_len, max_len=max_len, transcript=_fmt(chunk)))
         try:
             out, used_model, spent = ask_ai(prompt, purpose="Video: finding clips")
@@ -280,19 +305,20 @@ def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=
             continue
         if _overlaps(s, e, clips):
             continue  # overlaps a better clip
-        clips.append(_tidy(c, s, e))
+        clips.append(_tidy(c, s, e, game))
         if len(clips) >= max_clips:
             break
     clips.sort(key=lambda c: c["start"])
     return clips, {"model": used_model, "tokens": tokens, "note": note}
 
 
-def find_live_clips(words, z, now, chat=None, title="", uploader="", min_len=15, max_len=60, existing=()):
+def find_live_clips(words, z, now, chat=None, title="", uploader="", min_len=15, max_len=60, existing=(), game=None):
     """One live check over the recent transcript. Returns (clips, tokens_used)."""
     lines = make_lines(words, z, chat)
     if len(lines) < 3:
         return [], 0
     prompt = (HEAD.format(title=_safe(title) or "unknown", uploader=_safe(uploader) or "unknown", n=2)
+              + _game_rules(game)
               + LIVE_NOTE.format(now=now)
               + RULES.format(min_len=min_len, max_len=max_len, transcript=_fmt(lines)))
     out, _model, spent = ask_ai(prompt, purpose="Live check")
@@ -301,11 +327,11 @@ def find_live_clips(words, z, now, chat=None, title="", uploader="", min_len=15,
         s, e = _snap(c, lines, words, min_len, max_len, now)
         if e - s < min_len - 1 or _overlaps(s, e, list(existing) + clips):
             continue
-        clips.append(_tidy(c, s, e))
+        clips.append(_tidy(c, s, e, game))
     return clips, spent
 
 
-def describe(text, title="", uploader=""):
+def describe(text, title="", uploader="", game=None):
     """Hook, title and post text for a clip the user cut by hand."""
     blank = {"score": 0, "category": "other", "hook": "", "title": "", "description": "", "hashtags": [],
              "highlight_words": [], "reason": "Clipped by hand."}
@@ -313,10 +339,11 @@ def describe(text, title="", uploader=""):
         return blank
     prompt = (f"A streamer's viewer clipped this moment by hand.\nVideo title: {title or 'unknown'}\n"
               f"Channel: {uploader or 'unknown'}\n\nReturn exactly one item describing it. Set start and end to 0."
+              + _game_rules(game)
               + RULES.format(min_len=0, max_len=0, transcript=text))
     try:
         out, _m, _u = ask_ai(prompt, purpose="Hand clip: title and hook")
-        c = _tidy(out[0], 0, 0)
+        c = _tidy(out[0], 0, 0, game)
         c["reason"] = "Clipped by hand."
         return c
     except Exception:  # noqa: BLE001
@@ -360,13 +387,14 @@ SIG_SCHEMA = {
 }
 
 
-def judge_transcript(words, start, now, title="", uploader="", min_len=15, max_len=60, existing=(), n=2, must=False):
+def judge_transcript(words, start, now, title="", uploader="", min_len=15, max_len=60, existing=(), n=2, must=False, game=None):
     """Judge 1: words only. Returns (clips, tokens)."""
     lines = make_lines(words)
     if len(lines) < 3:
         return [], 0
     prompt = (TRANSCRIPT_JUDGE.format(title=_safe(title) or "unknown", uploader=_safe(uploader) or "unknown", start=start, now=now,
                                       n=n, must=MUST_PICK if must else NOT_MUST)
+              + _game_rules(game)
               + RULES.format(min_len=min_len, max_len=max_len, transcript=_fmt(lines)))
     out, _model, spent = ask_ai(prompt, purpose="Live: words judge")
     clips = []
@@ -374,13 +402,13 @@ def judge_transcript(words, start, now, title="", uploader="", min_len=15, max_l
         s, e = _snap(c, lines, words, min_len, max_len, now)
         if e - s < min_len - 1 or _overlaps(s, e, list(existing) + clips):
             continue
-        clips.append(_tidy(c, s, e))
+        clips.append(_tidy(c, s, e, game))
     return clips, spent
 
 
-def judge_signals(z, chat, start, now):
+def judge_signals(z, chat, start, now, unit="messages"):
     """Judge 2: loudness and chat activity only, no words. z and chat are per second from `start`.
-    Returns (moments, tokens)."""
+    `unit` says whether the chat numbers are messages or people. Returns (moments, tokens)."""
     rows = []
     has_chat = chat is not None and sum(chat) > 0
     for i in range(0, len(z), 2):
@@ -392,10 +420,11 @@ def judge_signals(z, chat, start, now):
     if len(rows) < 5:
         return [], 0
     avg = (sum(chat) / max(1, len(chat)) * 2) if has_chat else 0
+    word = "people talking" if unit == "people" else "chat messages"
     prompt = SIGNAL_JUDGE.format(
-        chat_note=f"\nC=chat messages in that slice (usual is about {avg:.1f})." if has_chat else
+        chat_note=f"\nC={word} in that slice (usual is about {avg:.1f})." if has_chat else
         "\nChat is not available for this stream.",
-        chat_hint="a burst of chat messages right after something happened, " if has_chat else "",
+        chat_hint=f"a burst of {word} right after something happened, " if has_chat else "",
         start=start, now=now, lines="\n".join(rows))
     out, _model, spent = ask_ai(prompt, SIG_SCHEMA, purpose="Live: reaction judge")
     moments = [{"start": float(m["start"]), "end": float(m["end"]), "score": int(m.get("score", 0)),

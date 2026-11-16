@@ -228,17 +228,60 @@ def _wrapped(prompt, schema):
             "\"items\", whose value follows this JSON Schema:\n" + json.dumps(_json_schema(schema)))
 
 
+def _json_chunks(text: str):
+    """Every balanced {...} or [...] in the text, in the order they appear."""
+    out, depth, start, in_str, esc = [], 0, None, False, False
+    for i, ch in enumerate(text):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+            if depth == 0 and start is not None:
+                out.append(text[start:i + 1])
+                start = None
+            elif depth < 0:
+                depth = 0
+    return out
+
+
 def _parse(text):
-    """The JSON in an answer, even if the model wrapped it in a code fence or a sentence."""
+    """The JSON in an answer, even if the model wrapped it in a code fence or a sentence.
+
+    A model that is not careful sometimes puts a sentence in front of the JSON,
+    or a second object after it, or forgets a comma. The JSON is looked for
+    inside the answer rather than demanded of it."""
     text = (text or "").strip()
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
+    out = None
     try:
         out = json.loads(text)
     except ValueError:
-        m = re.search(r"[\[{].*[\]}]", text, re.S)
-        if not m:
-            raise AIError("The AI did not answer with JSON.")
-        out = json.loads(m.group(0))
+        for chunk in _json_chunks(text):
+            try:
+                out = json.loads(chunk)
+                break
+            except ValueError:
+                continue
+        if out is None:
+            m = re.search(r"[\[{].*[\]}]", text, re.S)
+            if not m:
+                raise AIError("The AI did not answer with JSON.")
+            try:
+                out = json.loads(m.group(0))
+            except ValueError:
+                raise AIError("The AI did not answer with JSON.")
     if isinstance(out, dict) and "items" in out:
         out = out["items"]
     return out
@@ -264,9 +307,60 @@ def _gemini(model, prompt, schema):
     return json.loads(text), sent, max(0, int(u.get("totalTokenCount") or 0) - sent)   # the answer, and any thinking billed with it
 
 
+def _openai_body(r):
+    """The answer, whether the service sent plain JSON or an event stream.
+
+    Some OpenAI-compatible servers answer with a stream of events unless the
+    request says otherwise, so the answer is read from whichever shape arrived.
+    A model that answers with a tool call instead of a message leaves the JSON in
+    the call's arguments, so that is used too."""
+    try:
+        data = r.json()
+    except ValueError:
+        data = _from_events(r.text)
+    for ch in data.get("choices") or []:
+        msg = ch.get("message") or {}
+        if (msg.get("content") or "").strip():
+            continue
+        for call in msg.get("tool_calls") or []:
+            args = (call.get("function") or {}).get("arguments")
+            if args:
+                msg["content"] = args
+                break
+    return data
+
+
+def _from_events(text: str) -> dict:
+    """Read an answer out of a server-sent event stream."""
+    parts, usage, calls = [], {}, {}
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        chunk = line[5:].strip()
+        if not chunk or chunk == "[DONE]":
+            continue
+        try:
+            d = json.loads(chunk)
+        except ValueError:
+            continue
+        usage = d.get("usage") or usage
+        for ch in d.get("choices") or []:
+            for piece in ((ch.get("message") or {}), (ch.get("delta") or {})):
+                if piece.get("content"):
+                    parts.append(piece["content"])
+                for call in piece.get("tool_calls") or []:
+                    i = call.get("index", 0)
+                    calls[i] = calls.get(i, "") + ((call.get("function") or {}).get("arguments") or "")
+    message = {"content": "".join(parts)}
+    if not message["content"] and calls:
+        message["content"] = "".join(calls.values())
+    return {"choices": [{"message": message}], "usage": usage}
+
+
 def _openai(model, prompt, schema):
     headers = {"Authorization": f"Bearer {key()}"} if key() else {}
-    body = {"model": model, "messages": [{"role": "user", "content": _wrapped(prompt, schema)}]}
+    body = {"model": model, "messages": [{"role": "user", "content": _wrapped(prompt, schema)}], "stream": False}
     # Most services accept these two extras; a few models refuse one of them, so they are dropped on a refusal.
     extras = [{"temperature": 0.4, "response_format": {"type": "json_object"}}, {"response_format": {"type": "json_object"}}, {}]
     r = None
@@ -276,7 +370,7 @@ def _openai(model, prompt, schema):
             break
     if r.status_code != 200:
         _fail(r, model)
-    data = r.json()
+    data = _openai_body(r)
     u = data.get("usage") or {}
     return _parse(data["choices"][0]["message"].get("content")), int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
 

@@ -11,7 +11,10 @@ from pathlib import Path
 
 import numpy as np
 
-from . import alerts, auth, brain, config, creators, ctx, jobs, load, media, transcribe, usage
+from . import alerts, auth, brain, config, creators, ctx, facecam, games, jobs, load, media, transcribe, usage
+
+# ":username!user@host PRIVMSG #channel :the message"
+_NICK = re.compile(r"(?m)^:([A-Za-z0-9_]{2,25})!")
 
 SESSIONS: dict = {}
 SEG_SEC = 6           # length of each buffer piece
@@ -115,6 +118,7 @@ class Session:
         self.csv_seen = {}
         self.part = 0
         self.chat = collections.Counter()   # second -> messages
+        self.chat_users = {}                 # second -> the people who talked, when it can be told
         self.chat_total = 0
         self.chat_on = False
         self.last_check = 0.0
@@ -135,6 +139,36 @@ class Session:
         self.last_spike = -999.0      # when the last jump was sent to the AI (stream seconds)
         self.base = {}                # running averages the jumps are measured against, shown on the card
         self.spikes = 0
+        self.game = ""                # which game this stream is, when it can be told
+        self.facecam_box = None       # where the webcam is, found once the first clip is made
+
+    def _find_facecam(self, src):
+        """Where the webcam is in the stream, once. Only a sure answer is used."""
+        try:
+            box = facecam.detect(src)
+        except Exception:  # noqa: BLE001 - a missing facecam is not a failure
+            return None
+        if not box or box.get("conf") != "high":
+            return None
+        self.job["facecam"] = [box["x"], box["y"], box["w"], box["h"]]
+        return self.job["facecam"]
+
+    # ---------------------------------------------------------------- the game this stream is
+    def _game(self):
+        """The game, from what the creator set or from what the stream's title says.
+
+        The stream title is the best place to look: on launch night it says the game."""
+        if self.game:
+            return self.game
+        found = games.detect(self.settings.get("game"), self.job.get("title"), self.job.get("uploader"),
+                             self.job.get("source", {}).get("name"))
+        self.game = found[0] or ""
+        if self.game:
+            try:
+                self.job["game"] = self.game
+            except Exception:  # noqa: BLE001
+                pass
+        return self.game
 
     # ---------------------------------------------------------------- recording
     def start(self):
@@ -252,8 +286,14 @@ class Session:
                             s.sendall(b"PONG :tmi.twitch.tv\r\n")
                         elif b" PRIVMSG #" in line:
                             with self.lock:
-                                self.chat[int(self.samples / SR)] += 1
+                                second = int(self.samples / SR)
+                                self.chat[second] += 1
                                 self.chat_total += 1
+                                # how many different people, not how many messages: a wave of the same
+                                # emotes is not a crowd getting excited
+                                who = _NICK.findall(line.decode("utf-8", "replace"))
+                                if who:
+                                    self.chat_users.setdefault(second, set()).add(who[0].lower())
                 s.close()
             except Exception:  # noqa: BLE001
                 pass
@@ -261,14 +301,28 @@ class Session:
             self.stop_flag.wait(5)
 
     def _chat_spike(self, s, e):
-        """True if chat was at least 3x busier than usual during (and just after) these seconds."""
+        """True if chat was at least 3x busier than usual during (and just after) these seconds.
+
+        The crowd is counted as people, not messages: ten people saying "GG" is a reaction, one
+        person saying "GG" ten times is a bot."""
         elapsed = self.samples / SR
         if not self.chat_total or elapsed < 60:
             return False
         avg = self.chat_total / elapsed
         a, b = int(s), int(e) + 6
         rate = sum(self.chat.get(t, 0) for t in range(a, b + 1)) / (b - a + 1)
-        return rate > max(3 * avg, 1.0)
+        if rate <= max(3 * avg, 1.0):
+            return False
+        people = self.chat_people()
+        if not people:
+            return True
+        p_avg = sum(len(v) for v in people.values()) / max(1, len(people))
+        p_rate = sum(len(people.get(t, ())) for t in range(a, b + 1)) / (b - a + 1)
+        return p_rate >= max(2.0, 1.5 * p_avg)
+
+    def chat_people(self):
+        """Second -> how many different people were talking, where that is known."""
+        return self.chat_users
 
     # ---------------------------------------------------------------- analysis
     def _transcribe_step(self):
@@ -309,7 +363,11 @@ class Session:
                 self.base = {"warming": True}
                 return
             db = np.array(self.db[max(0, n - 190):], dtype=np.float32)
-            chat = [self.chat.get(t, 0) for t in range(max(0, n - 190), n)] if (self.chat_on or self.chat_total) else None
+            people = self.chat_people()
+            if people:
+                chat = [len(people.get(t, ())) for t in range(max(0, n - 190), n)]
+            else:
+                chat = [self.chat.get(t, 0) for t in range(max(0, n - 190), n)] if (self.chat_on or self.chat_total) else None
         amp = 10 ** (db / 20)                       # loudness as plain level, so a percentage means something
         base, cur = float(amp[:-10].mean()), float(amp[-5:].mean())
         loud_jump = cur / max(base, 1e-6) - 1
@@ -357,7 +415,7 @@ class Session:
         title, up = self.job["title"], self.job["uploader"]
         try:
             cands, tok = brain.judge_transcript(win, ws, now, title, up, st["min_len"], st["max_len"], self.job["clips"],
-                                                n=1 if every <= 2 else 2, must=must)  # Auto (0) asks for one
+                                                n=1 if every <= 2 else 2, must=must, game=self._game())  # Auto (0) asks for one
         except Exception as e:  # noqa: BLE001
             self.job["ai"]["last_error"] = str(e)[-200:]
             return self._verdict(verdict, "AI error: " + str(e)[-80:])
@@ -369,9 +427,15 @@ class Session:
             return self._verdict(verdict, "Words judge: nothing clip-worthy")
         z = brain.loud_zscore(np.array(self.db, dtype=np.float32))
         lo, hi = int(ws), int(now) + 1
-        chat = [self.chat.get(t, 0) for t in range(lo, hi)] if (self.chat_on or self.chat_total) else None
+        people = self.chat_people()
+        if people:
+            chat = [len(people.get(t, ())) for t in range(lo, hi)]
+            unit = "people"
+        else:
+            chat = [self.chat.get(t, 0) for t in range(lo, hi)] if (self.chat_on or self.chat_total) else None
+            unit = "messages"
         try:
-            sig, tok2 = brain.judge_signals(z[lo:hi], chat, lo, now)
+            sig, tok2 = brain.judge_signals(z[lo:hi], chat, lo, now, unit=unit)
             self.checks += 1
             self.tokens += tok2
         except Exception as e:  # noqa: BLE001
@@ -436,7 +500,7 @@ class Session:
             self.manual.remove(req)
             text = " ".join(w["w"] for w in self.words if req["start"] <= w["s"] <= req["end"])
             usage.set_context(self.job["creator"], self.job["title"] or "Live stream")
-            c = brain.describe(text, self.job["title"], self.job["uploader"])
+            c = brain.describe(text, self.job["title"], self.job["uploader"], game=self._game())
             c.update(start=round(req["start"], 2), end=round(min(req["end"], self.samples / SR), 2), score=0)
             if req.get("why"):
                 c["reason"] = req["why"]
@@ -471,6 +535,10 @@ class Session:
         lst = self.dir / "clips" / f"{clip['id']}.txt"
         lst.write_text("".join(f"file '{s[0].as_posix()}'\n" for s in segs), encoding="utf-8")
         src = self.dir / "clips" / f"{clip['id']}.src.ts"
+        if self.facecam_box is None:
+            self.facecam_box = self._find_facecam(src)
+        if self.facecam_box:
+            clip["facecam"] = self.facecam_box
         try:
             media.run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
                        "-c", "copy", str(src)])
