@@ -192,6 +192,16 @@ class Session:
             self.proc.terminate()
 
     def _ingest(self):
+        """Record the stream. However this ends, even when ffmpeg cannot start at all, the session is marked as
+        ended, so it stops showing as recording and gives its place to the next one."""
+        try:
+            self._ingest_loop()
+        except Exception as e:  # noqa: BLE001
+            self.job["error"] = f"Recording stopped: {media_safe(e)}"
+        finally:
+            self.ended = True
+
+    def _ingest_loop(self):
         fails = 0
         url = self.job["source"]["url"]
         while not self.stop_flag.is_set():
@@ -512,7 +522,7 @@ class Session:
     def _add_clip(self, c):
         self.n += 1
         c.update(id=f"clip{self.n:03d}", style=self.settings["style"], layout=self.settings["layout"],
-                 status="queued", version=0, made_at=time.time())
+                 captions=self.job["options"].get("captions", True), status="queued", version=0, made_at=time.time())
         with self.lock:
             self.job["clips"].append(c)
         jobs.save(self.job)

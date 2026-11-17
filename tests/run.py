@@ -53,6 +53,7 @@ def main() -> int:
                 ("AI services", ["tests/test_ai.py"]),
                 ("no sign-in, and the AI key from the dashboard", ["tests/test_local.py"]),
                 ("Hindi and Urdu captions in Roman letters", ["tests/test_roman.py"]),
+                ("turning captions off and back on", ["tests/test_captions.py"]),
                 ("connecting YouTube, Instagram and TikTok", ["tests/test_connect.py"]),
                 ("the new-version notice", ["tests/test_updates.py"]),
                 ("no limits by default", ["tests/test_limits.py"]),
@@ -62,7 +63,9 @@ def main() -> int:
                 ("knowing which game a stream is", ["tests/test_games.py"]),
                 ("finding the facecam in a gaming stream", ["tests/test_facecam.py"]),
                 ("fresh installs: ffmpeg, the speech model, AI errors", ["tests/test_tools.py"]),
-                ("the storage folder: full drive, open, move", ["tests/test_storage.py"])]
+                ("the storage folder: full drive, open, move", ["tests/test_storage.py"]),
+                ("security: visitor address, email addresses, Google sign-in, prompts", ["tests/test_hardening.py"]),
+                ("long logs, the machine monitor, failed recordings, admin day totals", ["tests/test_robustness.py"])]
         for name, args in runs:
             print(f"\n=== {name} ===", flush=True)
             r = subprocess.run([sys.executable, *args], cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
