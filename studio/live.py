@@ -22,11 +22,24 @@ PAD = 8               # seconds kept either side of a clip so it can be re-trimm
 CHECK_EVERY = 180     # look at the stream every 3 minutes...
 QUIET_MAX = 600       # ...but only ask the AI when something happened, or at most every 10 minutes when calm
 WINDOW = 240          # seconds of transcript shown to the AI per check
+CHAT_KEEP = 600       # seconds of chat names kept: only the last few minutes are ever read
 SR = 16000
 
 
 class NotLive(Exception):
     pass
+
+
+def _trim_names(users: dict, second: int, kept: int) -> int:
+    """Drop the chat names older than CHAT_KEEP, and say when this was last done.
+
+    Only the last few minutes are ever read, and a stream that runs for eight hours would otherwise hold
+    a name for every second of it. Called under the session's lock, from the chat reader thread."""
+    if second - kept < 60:
+        return kept              # walking the whole dict on every message would cost more than it saves
+    for t in [t for t in users if t < second - CHAT_KEEP]:
+        del users[t]
+    return second
 
 
 def media_safe(e) -> str:
@@ -119,6 +132,7 @@ class Session:
         self.part = 0
         self.chat = collections.Counter()   # second -> messages
         self.chat_users = {}                 # second -> the people who talked, when it can be told
+        self.chat_kept = 0                   # the second this was last pruned at
         self.chat_total = 0
         self.chat_on = False
         self.last_check = 0.0
@@ -331,6 +345,7 @@ class Session:
                                 who = _NICK.findall(line.decode("utf-8", "replace"))
                                 if who:
                                     self.chat_users.setdefault(second, set()).add(who[0].lower())
+                                    self.chat_kept = _trim_names(self.chat_users, second, self.chat_kept)
                 s.close()
             except Exception:  # noqa: BLE001
                 pass
@@ -691,7 +706,13 @@ class Session:
                 self._publish()
             except Exception as e:  # noqa: BLE001
                 self.job["ai"]["last_error"] = str(e)[-200:]
-            if (self.user_stopped and not self.manual) or (self.ended and not busy and len(self.pending) < SR * 2 and not self.manual):
+            # Leaving here must not happen while an AI check is still running: it may still be adding a
+            # clip, and cleanup() deletes the buffer that clip is cut from. That is true after a stop as
+            # well as at the end of a stream, so both wait for it. Stopping is still instant on the page:
+            # stop() has already written the status.
+            if ((self.user_stopped and not self.manual and not self.ai_busy)
+                    or (self.ended and not busy and not self.ai_busy
+                        and len(self.pending) < SR * 2 and not self.manual)):
                 break
             if not busy:
                 time.sleep(2)

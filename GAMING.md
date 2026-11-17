@@ -114,7 +114,7 @@ Only a sure answer is used. If the webcam is not found, the layout falls back to
 | | |
 |---|---|
 | found in the top-left of a real GTA V stream | 289x162 in a 1280x720 picture, high confidence |
-| a subscriber counter drawn over a browser | refused (not a lit room) |
+| a game panel in the bottom-right corner of a real stream | refused: it moves with the game behind it |
 | time | about 1-4 seconds, once per video or stream |
 
 ## 4. Ad breaks and static screens
@@ -126,8 +126,9 @@ sponsor reading.
 
 ## What it does not do
 
-- **It does not look at the screen.** PeakCut reads words, loudness and chat. It
-  cannot tell that a headshot was good, only that the streamer said something.
+- **It does not watch the stream.** PeakCut reads words, loudness and chat. One frame
+  is looked at once, to find the webcam; it cannot tell that a headshot was good,
+  only that the streamer said something.
 - **It does not know the game's story.** "He got the polaroid photo" means
   nothing to it, unless the streamer says it.
 - **The game list is hand-written.** A game that is not in `GAMES` gets no

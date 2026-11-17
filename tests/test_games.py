@@ -33,6 +33,9 @@ check("GTA 60 seconds is not a game", games.detect("GTA 60 seconds of gameplay")
 check("a GTA VI post carries the GTA VI tags", "GTA6" in games.tags_of("gta 6"), True)
 check("the tags do not double up", games.tags_of("GTA6Launch") == games.tags_of("gta 6"), True)
 check("an unknown game has no tags", games.tags_of("Hades II"), ["HadesII"])
+# a hashtag cannot contain a space, so a game tag with one in it would arrive broken
+tagged = brain._tidy({"hashtags": []}, 0, 1, game="cyberpunk 2077")["hashtags"]
+check("every tag a post carries is one word", all(t and " " not in t and "#" not in t for t in tagged), True)
 
 # ---- the tags go on every post, whatever the AI wrote
 tidy = brain._tidy({"start": 1, "end": 9, "score": 80, "category": "clutch", "hook": "one vs three",
@@ -92,6 +95,15 @@ with patch.object(brain, "describe", side_effect=RuntimeError("The AI did not an
 check("a hand-picked clip is made when the AI fails", len(added), 1)
 check("it is made without a hook rather than not at all", added and added[0]["hook"], "")
 check("the failure is remembered", "AI did not answer" in (s.job["ai"]["last_error"] or ""), True)
+
+# ---- an eight-hour stream must not keep a name for every second of it
+users, kept = {}, 0
+for t in range(0, 3000):
+    users.setdefault(t, set()).add(f"person{t}")
+    kept = live._trim_names(users, t, kept)
+check("the chat names of a whole stream are not kept", len(users) <= 700, True)
+check("the last few minutes of them still are", 2999 in users and min(users) >= 2999 - 660, True)
+check("the dict is not walked on every message", live._trim_names(users, 3005, 2999), 2999)
 
 print("ALL PASSED" if not fails else f"{len(fails)} FAILED")
 sys.exit(1 if fails else 0)

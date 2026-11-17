@@ -125,6 +125,7 @@ def _tidy(c, s, e, game=None):
     tags = [re.sub(r"\W", "", str(h))[:30] for h in tags if isinstance(h, (str, int))]
     # The tags of the game are put on every post, whatever the AI wrote: people search for the game.
     for t in games.tags_of(game):
+        t = re.sub(r"\W", "", str(t or ""))[:30]     # a tag with a space in it is not a hashtag
         if t and t.lower() not in {x.lower() for x in tags}:
             tags.append(t)
     words = c.get("highlight_words") if isinstance(c.get("highlight_words"), list) else []
@@ -265,7 +266,8 @@ def _game_rules(game):
     if not game:
         return ""
     tags = ", ".join(games.tags_of(game)) or "the game's own tags"
-    return GAME_RULES.format(game=games.name_of(game) or str(game)[:40], tags=tags)
+    # The creator types the game in themselves, so it is treated like any other text from outside.
+    return GAME_RULES.format(game=_safe(games.name_of(game) or str(game), 40), tags=tags)
 
 
 def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=15, max_len=60, log=print, game=None):

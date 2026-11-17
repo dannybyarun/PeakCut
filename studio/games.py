@@ -33,7 +33,7 @@ GAMES: list[tuple[str, list[str], list[str]]] = [
     ("Palworld", ["palworld"], ["Palworld", "Survival"]),
     ("Call of Duty", ["call of duty", "warzone"], ["CallOfDuty", "Warzone", "COD"]),
     ("Helldivers 2", ["helldivers 2", "helldivers2"], ["Helldivers2", "StarshipTroopers", "CoOp"]),
-    ("Cyberpunk 2077", ["cyberpunk 2077", "cyberpunk"], ["Cyberpunk2077", "NightCity", "Keanu Reeves"]),
+    ("Cyberpunk 2077", ["cyberpunk 2077", "cyberpunk"], ["Cyberpunk2077", "NightCity"]),
     ("Starfield", ["starfield"], ["Starfield", "Bethesda"]),
     ("Black Myth Wukong", ["black myth", "wukong"], ["BlackMythWukong", "ActionRPG"]),
     ("Marvel Rivals", ["marvel rivals"], ["MarvelRivals", "Heroes"]),
