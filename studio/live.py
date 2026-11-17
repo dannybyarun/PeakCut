@@ -141,6 +141,27 @@ class Session:
         self.spikes = 0
         self.game = ""                # which game this stream is, when it can be told
         self.facecam_box = None       # where the webcam is, found once the first clip is made
+        self.ai_busy = 0.0            # when the AI check now running was started, 0 when none is
+
+    def _ask_ai(self, window=None, why=None):
+        """Ask the AI on its own thread, so a slow answer never stops the recording.
+
+        While the AI thinks, the speech keeps being written and a "clip that" still works. One check
+        runs at a time; if the running one is stuck far past its own timeout, a new one is let through.
+        """
+        now = time.time()
+        if self.ai_busy and now - self.ai_busy < config.LIVE_AI_TIMEOUT + 60:
+            return
+
+        def work():
+            try:
+                self._ai_check(window, why)
+            except Exception as e:  # noqa: BLE001
+                self.job["ai"]["last_error"] = str(e)[-200:]
+            finally:
+                self.ai_busy = 0.0
+        self.ai_busy = now
+        threading.Thread(target=ctx.bind(work), daemon=True, name="ai_check").start()
 
     def _find_facecam(self, src):
         """Where the webcam is in the stream, once. Only a sure answer is used."""
@@ -428,7 +449,8 @@ class Session:
         title, up = self.job["title"], self.job["uploader"]
         try:
             cands, tok = brain.judge_transcript(win, ws, now, title, up, st["min_len"], st["max_len"], self.job["clips"],
-                                                n=1 if every <= 2 else 2, must=must, game=self._game())  # Auto (0) asks for one
+                                                n=1 if every <= 2 else 2, must=must, game=self._game(),
+                                                timeout=config.LIVE_AI_TIMEOUT)  # Auto (0) asks for one
         except Exception as e:  # noqa: BLE001
             self.job["ai"]["last_error"] = str(e)[-200:]
             return self._verdict(verdict, "AI error: " + str(e)[-80:])
@@ -448,7 +470,7 @@ class Session:
             chat = [self.chat.get(t, 0) for t in range(lo, hi)] if (self.chat_on or self.chat_total) else None
             unit = "messages"
         try:
-            sig, tok2 = brain.judge_signals(z[lo:hi], chat, lo, now, unit=unit)
+            sig, tok2 = brain.judge_signals(z[lo:hi], chat, lo, now, unit=unit, timeout=config.LIVE_AI_TIMEOUT)
             self.checks += 1
             self.tokens += tok2
         except Exception as e:  # noqa: BLE001
@@ -513,7 +535,8 @@ class Session:
             self.manual.remove(req)
             text = " ".join(w["w"] for w in self.words if req["start"] <= w["s"] <= req["end"])
             usage.set_context(self.job["creator"], self.job["title"] or "Live stream")
-            c = brain.describe(text, self.job["title"], self.job["uploader"], game=self._game())
+            c = brain.describe(text, self.job["title"], self.job["uploader"], game=self._game(),
+                               timeout=config.LIVE_AI_TIMEOUT)
             c.update(start=round(req["start"], 2), end=round(min(req["end"], self.samples / SR), 2), score=0)
             if req.get("why"):
                 c["reason"] = req["why"]
@@ -646,12 +669,12 @@ class Session:
                     pass
                 elif said and (self.t_done >= said["t"] + self.SAID_AFTER or (self.ended and not busy)):
                     self.said = None
-                    self._ai_check((said["t"] - self.SAID_BEFORE, said["t"] + self.SAID_AFTER), said["why"])
+                    self._ask_ai((said["t"] - self.SAID_BEFORE, said["t"] + self.SAID_AFTER), said["why"])
                 elif sp and (self.t_done >= sp["t"] + self.AUTO_AFTER or (self.ended and not busy)):
                     self.spike = None
-                    self._ai_check((sp["t"] - self.AUTO_BEFORE, sp["t"] + self.AUTO_AFTER), "Jump: " + sp["why"])
+                    self._ask_ai((sp["t"] - self.AUTO_BEFORE, sp["t"] + self.AUTO_AFTER), "Jump: " + sp["why"])
                 elif self.t_done - self.last_check >= every * 60 or (self.ended and not busy and self.t_done > self.last_check):
-                    self._ai_check()
+                    self._ask_ai()
                 self._publish()
             except Exception as e:  # noqa: BLE001
                 self.job["ai"]["last_error"] = str(e)[-200:]

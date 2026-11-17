@@ -67,5 +67,16 @@ people = s.chat_people()
 people[5].add("not really there")
 check("the people in chat are a copy", s.chat_users[5], {"someone"})
 
+# ---- a slow AI answer must not stop the recording
+import time as _time
+s = _session("morning everyone")
+s._ai_check = lambda *a, **k: _time.sleep(2)      # a model that takes its time
+t0 = _time.time()
+s._ask_ai()
+check("asking the AI does not hold up the recording", _time.time() - t0 < 0.5, True)
+t0 = _time.time()
+s._ask_ai()                                       # a second ask while the first is still out
+check("a second ask does not pile up", _time.time() - t0 < 0.5 and s.ai_busy > 0, True)
+
 print("ALL PASSED" if not fails else f"{len(fails)} FAILED")
 sys.exit(1 if fails else 0)

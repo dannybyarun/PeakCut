@@ -179,7 +179,7 @@ def loud_zscore(db):
     return (db - np.median(db)) / (db.std() + 1e-6)
 
 
-def ask_ai(prompt, schema=None, purpose="AI call"):
+def ask_ai(prompt, schema=None, purpose="AI call", timeout=None):
     """Try each model in order, with a couple of retries for rate limits and overloads.
     Returns (the answer, the model that gave it, tokens used) and notes the tokens in the usage record."""
     if not config.ai_ready():
@@ -188,7 +188,7 @@ def ask_ai(prompt, schema=None, purpose="AI call"):
     for model in ai.models():
         for attempt in range(3):
             try:
-                out, sent, wrote = ai.call(model, prompt, schema or SCHEMA)
+                out, sent, wrote = ai.call(model, prompt, schema or SCHEMA, timeout)
                 usage.record(sent, wrote, purpose)
                 ai.clear_problem()
                 return out, model, sent + wrote
@@ -331,7 +331,7 @@ def find_live_clips(words, z, now, chat=None, title="", uploader="", min_len=15,
     return clips, spent
 
 
-def describe(text, title="", uploader="", game=None):
+def describe(text, title="", uploader="", game=None, timeout=None):
     """Hook, title and post text for a clip the user cut by hand."""
     blank = {"score": 0, "category": "other", "hook": "", "title": "", "description": "", "hashtags": [],
              "highlight_words": [], "reason": "Clipped by hand."}
@@ -342,7 +342,7 @@ def describe(text, title="", uploader="", game=None):
               + _game_rules(game)
               + RULES.format(min_len=0, max_len=0, transcript=_safe(text, 8000)))
     try:
-        out, _m, _u = ask_ai(prompt, purpose="Hand clip: title and hook")
+        out, _m, _u = ask_ai(prompt, purpose="Hand clip: title and hook", timeout=timeout)
         c = _tidy(out[0], 0, 0, game)
         c["reason"] = "Clipped by hand."
         return c
@@ -387,7 +387,8 @@ SIG_SCHEMA = {
 }
 
 
-def judge_transcript(words, start, now, title="", uploader="", min_len=15, max_len=60, existing=(), n=2, must=False, game=None):
+def judge_transcript(words, start, now, title="", uploader="", min_len=15, max_len=60, existing=(), n=2, must=False,
+                    game=None, timeout=None):
     """Judge 1: words only. Returns (clips, tokens)."""
     lines = make_lines(words)
     if len(lines) < 3:
@@ -396,7 +397,7 @@ def judge_transcript(words, start, now, title="", uploader="", min_len=15, max_l
                                       n=n, must=MUST_PICK if must else NOT_MUST)
               + _game_rules(game)
               + RULES.format(min_len=min_len, max_len=max_len, transcript=_fmt(lines)))
-    out, _model, spent = ask_ai(prompt, purpose="Live: words judge")
+    out, _model, spent = ask_ai(prompt, purpose="Live: words judge", timeout=timeout)
     clips = []
     for c in sorted((c for c in out if isinstance(c, dict)), key=lambda c: -_num(c.get("score"))):
         s, e = _snap(c, lines, words, min_len, max_len, now)
@@ -406,7 +407,7 @@ def judge_transcript(words, start, now, title="", uploader="", min_len=15, max_l
     return clips, spent
 
 
-def judge_signals(z, chat, start, now, unit="messages"):
+def judge_signals(z, chat, start, now, unit="messages", timeout=None):
     """Judge 2: loudness and chat activity only, no words. z and chat are per second from `start`.
     `unit` says whether the chat numbers are messages or people. Returns (moments, tokens)."""
     rows = []
@@ -426,7 +427,7 @@ def judge_signals(z, chat, start, now, unit="messages"):
         "\nChat is not available for this stream.",
         chat_hint=f"a burst of {word} right after something happened, " if has_chat else "",
         start=start, now=now, lines="\n".join(rows))
-    out, _model, spent = ask_ai(prompt, SIG_SCHEMA, purpose="Live: reaction judge")
+    out, _model, spent = ask_ai(prompt, SIG_SCHEMA, purpose="Live: reaction judge", timeout=timeout)
     moments = [{"start": float(m["start"]), "end": float(m["end"]), "score": int(m.get("score", 0)),
                 "reason": str(m.get("reason", ""))} for m in out if isinstance(m, dict)]
     return moments, spent

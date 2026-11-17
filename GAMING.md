@@ -128,6 +128,12 @@ A launch-night roster of game streamers uses:
 `min_score` is 65 rather than the default 80: launch night is chaotic, and a
 tighter bar means fewer clips.
 
+One setting is not in that list because it is an environment variable:
+**`PEAKCUT_LIVE_AI_TIMEOUT`** (45 seconds by default) is how long one AI answer
+may take on a live stream. It is short on purpose. The AI is asked on its own
+thread, so while a model is thinking the speech is still being written and
+"clip that" still works — a slow answer costs one check, not the stream.
+
 ## The tests
 
 `tests/test_games.py` (17 checks) covers the game reading, the tags, and that
