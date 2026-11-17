@@ -272,7 +272,7 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
     # break the filter syntax).
     work = Path(tempfile.mkdtemp(prefix="pk"))
     try:
-        return _render_in(work, src, out_dir, name, start, end, layout, fg_h, ass, face)
+        return _render_in(work, src, out_dir, name, start, end, layout, fg_h, ass, face=face)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
