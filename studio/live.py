@@ -321,8 +321,11 @@ class Session:
         return p_rate >= max(2.0, 1.5 * p_avg)
 
     def chat_people(self):
-        """Second -> how many different people were talking, where that is known."""
-        return self.chat_users
+        """Second -> how many different people were talking, where that is known.
+
+        A copy is taken under the lock: the chat reader thread adds to it as it goes."""
+        with self.lock:
+            return {t: set(names) for t, names in self.chat_users.items()}
 
     # ---------------------------------------------------------------- analysis
     def _transcribe_step(self):
@@ -535,10 +538,6 @@ class Session:
         lst = self.dir / "clips" / f"{clip['id']}.txt"
         lst.write_text("".join(f"file '{s[0].as_posix()}'\n" for s in segs), encoding="utf-8")
         src = self.dir / "clips" / f"{clip['id']}.src.ts"
-        if self.facecam_box is None:
-            self.facecam_box = self._find_facecam(src)
-        if self.facecam_box:
-            clip["facecam"] = self.facecam_box
         try:
             media.run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
                        "-c", "copy", str(src)])
@@ -548,6 +547,13 @@ class Session:
             return
         finally:
             lst.unlink(missing_ok=True)
+        # Only the gameplay layout uses a webcam, and only once the clip's own file is written: the
+        # webcam is looked for in it, once per stream.
+        if clip.get("layout") == "gameplay":
+            if self.facecam_box is None:
+                self.facecam_box = self._find_facecam(src)
+            if self.facecam_box:
+                clip["facecam"] = self.facecam_box
         dur = segs[-1][2] - segs[0][1]
         offset = self._align(src, segs[0][1] + self.clock_fix, dur)
         self.clock_fix = offset - segs[0][1]  # the two clocks drift ~4 s an hour; start the next clip from here

@@ -7,7 +7,7 @@ reacting. Three changes make it work on those streams.
 ## 1. It knows which game it is
 
 `studio/games.py` reads the game from the stream's title, the video's title, the
-channel name, or the game the creator set. Twenty-five games are known by name,
+channel name, or the game the creator set. Twenty-three games are known by name,
 including GTA VI, GTA V, Fortnite, Minecraft, Valorant, Elden Ring, Palworld,
 Helldivers 2, Cyberpunk 2077, Marvel Rivals, The Finals, Rocket League and more.
 
@@ -117,11 +117,11 @@ sponsor reading.
 
 ## Settings for launch night
 
-The roster in [LAUNCH-ROSTER.md](LAUNCH-ROSTER.md) uses:
+A launch-night roster of game streamers uses:
 
 ```json
-{ "style": "hype", "layout": "blur", "min_len": 15, "max_len": 60,
-  "max_clips": 6, "min_score": 65, "auto_watch": true, "buffer_min": 20,
+{ "style": "hype", "layout": "gameplay", "min_len": 15, "max_len": 60,
+  "max_clips": 6, "min_score": 65, "auto_watch": false, "buffer_min": 10,
   "live_per_hour": 4, "ai_every_min": 3, "ai_only_on_spike": true }
 ```
 

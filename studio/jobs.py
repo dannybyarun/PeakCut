@@ -525,7 +525,6 @@ def _run_job(job):
         job["game"] = game
     t0 = time.time()
     notes = []
-    statics = []       # the ad breaks and static screens of this video, found once
     face = None        # where the webcam is in the source, found once
     usage.set_context(job["creator"], job["title"] or src.get("name"))
     resuming = bool(job.pop("resume", False)) and (d / "words.json").is_file()
@@ -670,6 +669,9 @@ def _run_job(job):
                     _set(job, progress=max(job["progress"], 0.14 + 0.78 * ((a_ - lo) + p * (b_ - a_)) / max(1, hi - lo)))
             heard[i] = ahead.submit(ctx.bind(transcribe.transcribe), audio[a_:b_], tp)
 
+    # The ad breaks and static screens of the whole video, found once. It reads the video end to end,
+    # so it is done here rather than for each clip, and only when asked for.
+    statics = quality.static_ranges(job.get("source_path") or "") if config.SKIP_STATIC else []
     for bi, (a, b) in enumerate(blocks):
         if bi < done_blocks:
             continue                      # transcribed and checked by the AI before the restart
@@ -701,25 +703,23 @@ def _run_job(job):
         model = ai.get("model") or model
         if ai.get("note"):
             notes.append(ai["note"])
-        if found and config.SKIP_STATIC:
-            # A commercial or a "be right back" slate is not a clip. The static stretches of the whole video are
-            # found once, then any clip that sits mostly inside one is dropped.
-            if not statics:
-                statics.extend(quality.static_ranges(job.get("source_path") or ""))
-            if statics:
-                keep = []
-                for c in found:
-                    a_s, b_s = c["start"] + shift, c["end"] + shift
-                    inside = quality.static_overlap(a_s, b_s, statics)
-                    if inside > 0.5 * max(1.0, b_s - a_s):
-                        notes.append(f"A clip from {round(a_s)}s was left out: it sat in an ad break or a static screen.")
-                    else:
-                        keep.append(c)
-                found = keep
+        if found and statics:
+            # A commercial or a "be right back" slate is not a clip. Any clip that sits mostly inside one
+            # is dropped.
+            keep = []
+            for c in found:
+                a_s, b_s = c["start"] + shift, c["end"] + shift
+                inside = quality.static_overlap(a_s, b_s, statics)
+                if inside > 0.5 * max(1.0, b_s - a_s):
+                    notes.append(f"A clip from {round(a_s)}s was left out: it sat in an ad break or a static screen.")
+                else:
+                    keep.append(c)
+            found = keep
         for c in found:
             c.update(id=f"clip{len(job['clips']) + 1:02d}", start=round(c["start"] + shift, 2),
                      end=round(c["end"] + shift, 2), style=o["style"], layout=o["layout"], status="queued", version=0)
-            if face is None:
+            # Only the gameplay layout uses a webcam, so it is only looked for then.
+            if o["layout"] == "gameplay" and face is None:
                 face = _facecam(job)
             if face:
                 c["facecam"] = face

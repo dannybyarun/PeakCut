@@ -56,5 +56,16 @@ check("a live session finds the game in its title", _session("CLICK THIS STREAM 
 check("the creator's own setting wins over the title", _session("just chatting", "gta 6")._game(), "Grand Theft Auto VI")
 check("a live stream with no game in it says so", _session("morning everyone")._game(), "")
 
+# ---- a short name that means something else is not a game
+check("'rust' is not read as the game Rust", games.detect("Rust removal and restoration")[0], None)
+check("'the finals' is not read as a game", games.detect("The finals of the world cup")[0], None)
+
+# ---- the people in chat are read under the lock, as a copy
+s = _session("morning everyone")
+s.chat_users[5] = {"someone"}
+people = s.chat_people()
+people[5].add("not really there")
+check("the people in chat are a copy", s.chat_users[5], {"someone"})
+
 print("ALL PASSED" if not fails else f"{len(fails)} FAILED")
 sys.exit(1 if fails else 0)

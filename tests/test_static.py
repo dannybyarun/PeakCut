@@ -35,5 +35,10 @@ check("a video that never moves is one long stretch", len(quality.static_ranges(
 # ---- a missing file must not stop a job
 check("a file that cannot be read gives nothing, not an error", quality.static_ranges(os.path.join(os.environ["PEAKCUT_DATA"], "nope.mp4")), [])
 
+# ---- it is offered, but it is off until asked for
+from studio import config
+check("the static skip is off by default", config.SKIP_STATIC, False)
+check("the threshold can still be set", config.STATIC_THRESHOLD > 0, True)
+
 print("ALL PASSED" if not fails else f"{len(fails)} FAILED")
 sys.exit(1 if fails else 0)

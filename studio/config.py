@@ -129,8 +129,10 @@ ASR_MODEL_NAME = env("PEAKCUT_ASR_MODEL", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2
 ASR_MODEL_DIR = MODELS_DIR / ASR_MODEL_NAME
 DATABASE_URL = env("DATABASE_URL") or f"sqlite:///{(DATA_DIR / 'peakcut.db').as_posix()}"
 # Commercials and "be right back" screens are stitched into streams. A clip taken from one is worthless, so those
-# seconds are found and left out. The threshold is the mean luma difference between frames: under it, nothing moved.
-SKIP_STATIC = env("PEAKCUT_SKIP_STATIC", "1") != "0"
+# seconds can be found and left out. It is off by default: it reads the whole video once, which is not free, and
+# a video that is meant to be still must not lose its clips. PEAKCUT_SKIP_STATIC=1 turns it on.
+# The threshold is the mean luma difference between frames: under it, nothing moved.
+SKIP_STATIC = env("PEAKCUT_SKIP_STATIC", "0") == "1"
 STATIC_THRESHOLD = float(env("PEAKCUT_STATIC_THRESHOLD", "0.4"))
 STATIC_MIN_SECONDS = float(env("PEAKCUT_STATIC_MIN_SECONDS", "6"))
 
