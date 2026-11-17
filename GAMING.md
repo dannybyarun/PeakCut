@@ -83,12 +83,30 @@ HUD bar changes, the edge of the webcam box does not move at all.
 - for every column and every row, how much the picture changes at that line is
   counted, and the median over the frames is taken, so one busy moment cannot
   invent a line
-- the lines that stand out are the borders; a box in one of the four corners that
-  two of them make is the candidate
-- the two lines are then measured again on a full-size frame, to the pixel
-- finally the colour is checked: a webcam is a lit room, so it is normally
-  **warmer or brighter** than the game it sits on. A scoreboard or a donation
-  overlay drawn over the game is not, and is refused.
+- the lines that stand out are the borders. Any rectangle they and the frame's own
+  edges can make is a candidate: a webcam may sit in a corner, along one edge, or
+  even with a margin all round. Square and upright pictures count too, because a
+  vertical webcam is common.
+- **the picture inside has to be still.** This is what tells a webcam from the
+  game's own panels, which have straight borders too and are drawn over the game
+  with the game showing through them. A person sits in a room and shifts a little;
+  the game behind a panel keeps moving. On a real stream the webcam measured 4
+  where the minimap, the chat column, the HUD panel and the scoreboard all measured
+  33 to 50.
+- the borders are then measured again on a full-size frame, to the pixel
+
+**One frame is also shown to the AI.** Reading a picture of a person is something
+a model does far better than any measurement, and it costs one call per stream, not
+per clip. What it says is used in a way that cannot do harm: its box picks *which*
+of the measured rectangles is the webcam, and if it matches none of them its own box
+is put onto the real borders and checked like any other candidate. A model that
+only reads text, a service that refuses pictures, or an answer that is nonsense all
+leave the measurement alone. If the model looks and says there is no webcam, that is
+believed: a stream with no webcam is cropped, which still looks right.
+
+That one frame is a small JPEG of the stream, and it goes to the AI service you
+configured, the same service the transcript already goes to. With no AI set, no
+picture leaves the machine and the borders are measured on their own.
 
 Only a sure answer is used. If the webcam is not found, the layout falls back to
 "Fill screen", which is still the right shape for a game.

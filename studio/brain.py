@@ -374,6 +374,41 @@ funny moments, fails, clutch plays, rage, shock, hot takes, or a short story wit
 MUST_PICK = "This time you MUST return the single best moment in this stretch, even if it is only decent."
 NOT_MUST = "Most checks should return []. Only return a moment you would stop scrolling for."
 
+FACE_CAM = """One frame of a gaming stream is attached.
+
+A streamer often puts a small picture of their own webcam in a corner of the stream, next to the game.
+Is the streamer's own face on this frame? A real person, filmed by a camera, sitting in a room. Not a
+character in the game, not a picture inside a game menu, not someone in a video the game is playing.
+
+Answer in one line and nothing else:
+  CAM x=..% y=..% w=..% h=..%     the webcam picture, as parts of the whole frame; x,y is its top left corner
+  NO CAM                         there is no webcam on this frame"""
+
+_FACE_BOX = re.compile(r"x\s*=\s*(\d+(?:\.\d+)?)\s*%?\s*,?\s*y\s*=\s*(\d+(?:\.\d+)?)\s*%?\s*"
+                       r",?\s*w\s*=\s*(\d+(?:\.\d+)?)\s*%?\s*,?\s*h\s*=\s*(\d+(?:\.\d+)?)", re.I)
+
+
+def look_for_facecam(jpeg: bytes, timeout=None) -> dict:
+    """One frame of a stream to the model: where is the webcam, if there is one.
+
+    Returns {"looked": whether the model understood the question at all, "box": (x, y, w, h) as parts of
+    the frame, or None}. A model that only reads text, or a service that refuses pictures, leaves "looked"
+    False, and the caller falls back to the borders it can measure itself."""
+    try:
+        text, sent, wrote = ai.see(FACE_CAM, jpeg, timeout)
+    except Exception:  # noqa: BLE001 - no picture is not a failure, the local search still runs
+        return {"looked": False, "box": None}
+    if sent or wrote:
+        usage.record(sent, wrote, "Webcam: one frame")
+    m = _FACE_BOX.search(text or "")
+    if m:
+        x, y, w, h = (max(0.0, min(1.0, float(v) / 100.0)) for v in m.groups())
+        return {"looked": True, "box": (x, y, w, h)}
+    said_no = re.search(r"\bno\s*(?:web\s*-?\s*)?cam\b|\bnot\s+(?:visible|there|present)\b", text or "", re.I)
+    if said_no:
+        return {"looked": True, "box": None}
+    return {"looked": False, "box": None}
+
 SIGNAL_JUDGE = """You judge a live stream ONLY from its reaction signals. You cannot hear the words or see the video.
 Each line is a 2-second slice: [seconds] L=how much louder than usual the streamer was (0 = normal,
 +2 or more = shouting or laughing hard, negative = quieter){chat_note}

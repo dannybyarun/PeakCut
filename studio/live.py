@@ -141,6 +141,7 @@ class Session:
         self.spikes = 0
         self.game = ""                # which game this stream is, when it can be told
         self.facecam_box = None       # where the webcam is, found once the first clip is made
+        self.facecam_checked = False  # the look is made once, even when it finds nothing
         self.ai_busy = 0.0            # when the AI check now running was started, 0 when none is
 
     def _ask_ai(self, window=None, why=None):
@@ -164,9 +165,14 @@ class Session:
         threading.Thread(target=ctx.bind(work), daemon=True, name="ai_check").start()
 
     def _find_facecam(self, src):
-        """Where the webcam is in the stream, once. Only a sure answer is used."""
+        """Where the webcam is in the stream, once. Only a sure answer is used.
+
+        One frame goes to the AI as well, and whatever it says is measured again on the
+        picture. A stream where the webcam is a square picture along the right edge, or
+        one where there is no webcam at all and the game has panels of its own, is told
+        apart from a real camera by what moves: a person sits still, the game does not."""
         try:
-            box = facecam.detect(src)
+            box = facecam.detect(src, ask=brain.look_for_facecam)
         except Exception:  # noqa: BLE001 - a missing facecam is not a failure
             return None
         if not box or box.get("conf") != "high":
@@ -589,8 +595,9 @@ class Session:
         # Only the gameplay layout uses a webcam, and only once the clip's own file is written: the
         # webcam is looked for in it, once per stream.
         if clip.get("layout") == "gameplay":
-            if self.facecam_box is None:
+            if not self.facecam_checked:
                 self.facecam_box = self._find_facecam(src)
+                self.facecam_checked = True
             if self.facecam_box:
                 clip["facecam"] = self.facecam_box
         dur = segs[-1][2] - segs[0][1]

@@ -7,7 +7,11 @@
     PEAKCUT_AI_BASE_URL   only for "custom" (any service that speaks the OpenAI chat format), or to override
 
 Every service is asked for the same thing: JSON that follows a small schema. Gemini takes the schema directly.
-The others are told the schema in the prompt and asked for a JSON object, which works with any chat model."""
+The others are told the schema in the prompt and asked for a JSON object, which works with any chat model.
+
+One picture can also be shown (`see`), which is how the webcam is looked for on a gaming stream. A model that
+cannot look at pictures answers with something else, and that is simply taken as "it did not look"."""
+import base64
 import json
 import os
 import re
@@ -295,6 +299,55 @@ def call(model: str, prompt: str, schema: dict, timeout: float | None = None):
     answer must not stop the recording."""
     how = PROVIDERS[provider()][2]
     return {"gemini": _gemini, "openai": _openai, "anthropic": _anthropic}[how](model, prompt, schema, timeout)
+
+
+def see(prompt: str, image: bytes, timeout: float | None = None) -> tuple[str, int, int]:
+    """Ask one model about one picture: (the answer as text, tokens in, tokens out).
+
+    Nothing is broken by a service that cannot look at pictures, or a model that is only text: the answer
+    comes back empty, or says something the caller does not understand, and the caller carries on without
+    it. The picture is a JPEG, passed as base64 inside the ordinary message."""
+    if not ready() or not image or not models():
+        return "", 0, 0
+    model = models()[0]
+    b64 = base64.b64encode(image).decode()
+    how = PROVIDERS[provider()][2]
+    if how == "gemini":
+        body = {"contents": [{"role": "user", "parts": [
+            {"text": prompt},
+            {"inline_data": {"mimeType": "image/jpeg", "data": b64}}]}]}
+        r = httpx.post(f"{base_url()}/{model}:generateContent", json=body,
+                       headers={"x-goog-api-key": key()}, timeout=timeout or 120)
+        if r.status_code != 200:
+            _fail(r, model)
+        data = r.json()
+        text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"])
+        u = data.get("usageMetadata", {})
+        sent = int(u.get("promptTokenCount") or 0)
+        return text, sent, max(0, int(u.get("totalTokenCount") or 0) - sent)
+    if how == "anthropic":
+        body = {"model": model, "max_tokens": 300, "messages": [{"role": "user", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
+            {"type": "text", "text": prompt}]}]}
+        r = httpx.post(f"{base_url()}/messages", json=body, timeout=timeout or 120,
+                       headers={"x-api-key": key(), "anthropic-version": "2023-06-01"})
+        if r.status_code != 200:
+            _fail(r, model)
+        data = r.json()
+        text = "".join(p.get("text", "") for p in data.get("content") or [] if p.get("type") == "text")
+        u = data.get("usage") or {}
+        return text, int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0)
+    headers = {"Authorization": f"Bearer {key()}"} if key() else {}
+    body = {"model": model, "stream": False, "messages": [{"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}}]}]}
+    r = httpx.post(f"{base_url()}/chat/completions", json=body, headers=headers, timeout=timeout or 120)
+    if r.status_code != 200:
+        _fail(r, model)
+    data = _openai_body(r)
+    text = (data["choices"][0]["message"].get("content") or "")
+    u = data.get("usage") or {}
+    return text, int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
 
 
 def _gemini(model, prompt, schema, timeout=None):

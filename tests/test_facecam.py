@@ -68,6 +68,40 @@ try:
     check("the box is the right size", abs(box[2] - 300) <= 1 and abs(box[3] - 170) <= 1, True)
     check("a job with no video finds no webcam", jobs._facecam({"source_path": os.path.join(work, "nope.mp4")}), None)
 
+    # ---- a webcam that is square and runs along one edge, not into a corner
+    sq = make("cam_sq.mp4", "color=c=0xC08050:size=360x355:rate=25", where="920:165")
+    box = facecam.detect(sq)
+    check("a square webcam along an edge is found", (box or {}).get("corner"), "right")
+    check("it starts where the picture starts", abs((box or {}).get("x", 0) - 920) <= 3, True)
+    check("it is as tall as the picture", abs((box or {}).get("h", 0) - 355) <= 6, True)
+
+    # ---- one frame goes to the AI, and its answer is measured again before it is used
+    def say(looked, box=None):
+        return lambda jpeg: {"looked": looked, "box": box}
+
+    box = facecam.detect(sq, ask=say(True, (0.71, 0.22, 0.29, 0.44)))      # rough, as a model gives it
+    check("the box the AI suggests is put onto the borders", abs((box or {}).get("x", 0) - 920) <= 3, True)
+    check("a rough box is corrected to the picture's real size", abs((box or {}).get("h", 0) - 355) <= 6, True)
+    check("it is still sure of it", (box or {}).get("conf"), "high")
+    check("the AI saying there is no webcam is believed", facecam.detect(sq, ask=say(True, None)), None)
+    box = facecam.detect(sq, ask=say(True, (0.02, 0.02, 0.06, 0.06)))      # a box on nothing at all
+    check("a box that lands on nothing is thrown away and the search carries on",
+          abs((box or {}).get("x", 0) - 920) <= 3, True)
+    box = facecam.detect(sq, ask=say(False))                              # a model that only reads text
+    check("a model that cannot look at pictures changes nothing", abs((box or {}).get("x", 0) - 920) <= 3, True)
+
+    # ---- what the model's one line is turned into
+    from unittest.mock import patch
+    from studio import brain, ai as _ai
+    with patch.object(_ai, "see", return_value=("CAME x=71% y=20% w=29% h=38%", 0, 0)):
+        got = brain.look_for_facecam(b"jpeg")
+    check("the box in the model's answer is read", [round(v, 2) for v in (got["box"] or ())],
+          [0.71, 0.20, 0.29, 0.38])
+    with patch.object(_ai, "see", return_value=("NO CAM", 0, 0)):
+        check("'no cam' is read as no webcam", brain.look_for_facecam(b"jpeg"), {"looked": True, "box": None})
+    with patch.object(_ai, "see", return_value=("I am a text model.", 0, 0)):
+        check("an answer that is neither is not believed", brain.look_for_facecam(b"jpeg")["looked"], False)
+
     # ---- the layout: the game fills the screen and the webcam sits in the corner
     f = render._filter("gameplay", 1920, [0, 0, 300, 170])
     check("the game fills the screen", "scale=1080:1920" in f and "crop=1080:1920" in f, True)

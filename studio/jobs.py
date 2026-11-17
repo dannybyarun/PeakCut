@@ -527,12 +527,14 @@ def _facecam(job) -> list | None:
     """Where the webcam is in the source: once for the whole video, for every clip of it.
 
     Only a sure answer is used. A box that is a scoreboard drawn over the game would
-    put a picture of a scoreboard in the corner of the clip."""
+    put a picture of a scoreboard in the corner of the clip. One frame is also shown to
+    the AI, which tells a person from a game character better than any measurement can;
+    what it says is measured again on the picture, so it cannot do any harm."""
     path = job.get("source_path")
     if not path or not Path(path).is_file():
         return None
     try:
-        box = facecam.detect(path)
+        box = facecam.detect(path, ask=brain.look_for_facecam)
     except Exception:  # noqa: BLE001 - a missing facecam is not a failure
         return None
     if not box or box.get("conf") != "high":
@@ -561,7 +563,7 @@ def _run_job(job):
         job["game"] = game
     t0 = time.time()
     notes = []
-    face = None        # where the webcam is in the source, found once
+    face = False       # where the webcam is in the source, found once; False means not looked for yet
     usage.set_context(job["creator"], job["title"] or src.get("name"))
     resuming = bool(job.pop("resume", False)) and (d / "words.json").is_file()
     if resuming:   # after a restart: keep the transcript parts, clips and AI answers already made, and carry on
@@ -755,8 +757,9 @@ def _run_job(job):
             c.update(id=f"clip{len(job['clips']) + 1:02d}", start=round(c["start"] + shift, 2),
                      end=round(c["end"] + shift, 2), style=o["style"], layout=o["layout"],
                      captions=o.get("captions", True), status="queued", version=0)
-            # Only the gameplay layout uses a webcam, so it is only looked for then.
-            if o["layout"] == "gameplay" and face is None:
+            # Only the gameplay layout uses a webcam, so it is only looked for then, and only once: a
+            # stream with no webcam is not looked for again on every clip of it.
+            if o["layout"] == "gameplay" and face is False:
                 face = _facecam(job)
             if face:
                 c["facecam"] = face
