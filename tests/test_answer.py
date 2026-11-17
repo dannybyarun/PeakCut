@@ -23,5 +23,22 @@ try:
 except Exception:
     check("an answer with no closing bracket is refused", True, True)
 
+# ---- a hand-picked clip: an empty answer is asked once more, and a clip is never lost to it
+from unittest.mock import patch
+from studio import brain
+item = {"start": 0, "end": 0, "score": 70, "category": "funny", "hook": "WILD NIGHT", "title": "T",
+        "description": "D", "hashtags": ["Gaming"], "highlight_words": []}
+words = "Okay, I hope. You are all planning wild night out there. You can"
+with patch.object(brain, "ask_ai", side_effect=[([], "m", 1), ([item], "m", 2)]) as ask:
+    c = brain.describe(words, "GTA V #16", "Chan")
+    check("an empty answer is asked again", ask.call_count, 2)
+    check("the second answer is used", c["hook"], "WILD NIGHT")
+with patch.object(brain, "ask_ai", side_effect=[([], "m", 1), ([], "m", 2)]):
+    c = brain.describe(words, "GTA V #16", "Chan")
+    check("two empty answers give a clip with no hook, not an error", c["hook"], "")
+with patch.object(brain, "ask_ai", side_effect=RuntimeError("The AI did not answer")):
+    c = brain.describe(words, "GTA V #16", "Chan")
+    check("a failed call gives a clip with no hook, not an error", c["hook"], "")
+
 print("ALL PASSED" if not fails else f"{len(fails)} FAILED")
 sys.exit(1 if fails else 0)

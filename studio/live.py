@@ -532,11 +532,17 @@ class Session:
 
     def _manual_step(self):
         for req in [m for m in self.manual if m["end"] <= self.t_done or self.ended]:
-            self.manual.remove(req)
             text = " ".join(w["w"] for w in self.words if req["start"] <= w["s"] <= req["end"])
             usage.set_context(self.job["creator"], self.job["title"] or "Live stream")
-            c = brain.describe(text, self.job["title"], self.job["uploader"], game=self._game(),
-                               timeout=config.LIVE_AI_TIMEOUT)
+            try:
+                c = brain.describe(text, self.job["title"], self.job["uploader"], game=self._game(),
+                                   timeout=config.LIVE_AI_TIMEOUT)
+            except Exception as e:  # noqa: BLE001
+                # Someone asked for this clip by hand. A slow or broken AI costs it its hook, not the clip.
+                self.job["ai"]["last_error"] = str(e)[-200:]
+                c = {"score": 0, "category": "other", "hook": "", "title": self.job["title"],
+                     "description": "", "hashtags": [], "highlight_words": []}
+            self.manual.remove(req)
             c.update(start=round(req["start"], 2), end=round(min(req["end"], self.samples / SR), 2), score=0)
             if req.get("why"):
                 c["reason"] = req["why"]

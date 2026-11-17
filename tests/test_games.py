@@ -15,7 +15,8 @@ def check(n, got, want=True):
 def _session(title, game=""):
     """A live session that is not recording anything: only the game reading is wanted."""
     d = tempfile.mkdtemp(prefix="pc-games-live-")
-    s = live.Session({"title": title, "uploader": "someone", "dir": d, "source": {"url": "", "name": title}},
+    s = live.Session({"title": title, "uploader": "someone", "dir": d, "creator": "", "ai": {},
+                      "source": {"url": "", "name": title}},
                      {"game": game})
     return s
 
@@ -77,6 +78,20 @@ check("asking the AI does not hold up the recording", _time.time() - t0 < 0.5, T
 t0 = _time.time()
 s._ask_ai()                                       # a second ask while the first is still out
 check("a second ask does not pile up", _time.time() - t0 < 0.5 and s.ai_busy > 0, True)
+
+# ---- a hand-picked clip is made even when the AI cannot answer
+from unittest.mock import patch
+added = []
+s = _session("morning everyone")
+s.words = [{"w": "hello", "s": 0.5, "e": 0.9, "p": 0}]
+s.t_done, s.samples = 10.0, 10 * 16000
+s._add_clip = added.append
+s.manual.append({"start": 0.0, "end": 2.0})
+with patch.object(brain, "describe", side_effect=RuntimeError("The AI did not answer")):
+    s._manual_step()
+check("a hand-picked clip is made when the AI fails", len(added), 1)
+check("it is made without a hook rather than not at all", added and added[0]["hook"], "")
+check("the failure is remembered", "AI did not answer" in (s.job["ai"]["last_error"] or ""), True)
 
 print("ALL PASSED" if not fails else f"{len(fails)} FAILED")
 sys.exit(1 if fails else 0)

@@ -343,6 +343,13 @@ def describe(text, title="", uploader="", game=None, timeout=None):
               + RULES.format(min_len=0, max_len=0, transcript=_safe(text, 8000)))
     try:
         out, _m, _u = ask_ai(prompt, purpose="Hand clip: title and hook", timeout=timeout)
+        if not out:
+            # A quiet or half-finished moment: the answer came back empty. The viewer asked for this
+            # clip by hand, so it is asked once more, plainly.
+            out, _m, _u = ask_ai(prompt + "\n\nReturn one item. The moment is short; describe what was said.",
+                                 purpose="Hand clip: title and hook", timeout=timeout)
+        if not out:
+            return blank
         c = _tidy(out[0], 0, 0, game)
         c["reason"] = "Clipped by hand."
         return c
