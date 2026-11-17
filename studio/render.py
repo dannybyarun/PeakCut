@@ -252,6 +252,14 @@ def _filter(layout, fg_h, facecam=None):
             f"[bg][fg]overlay=0:(H-h)/2,setsar=1[v0];")
 
 
+def _hook_y(layout, hook_y, facecam=None):
+    """Where the heading goes. In the gameplay layout the webcam sits in the top corner, so a heading
+    across the top would run under it: it goes just below the picture instead."""
+    if layout == "gameplay" and facecam and len(facecam) == 4 and facecam[2] > 8:
+        return PIP_MARGIN + int(round(PIP_W * facecam[3] / facecam[2])) + 32
+    return hook_y
+
+
 _qsv_ok = None
 RENDER_SECONDS = 600      # one clip's video encode; far beyond normal, so a frozen encoder is stopped, not waited on
 
@@ -264,6 +272,7 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
     face = clip.get("facecam")
     if layout == "gameplay" and not (face and len(face) == 4):
         layout = "crop"     # no webcam found: the game fills the screen, which is still the right shape
+    hook_y = _hook_y(layout, hook_y, face)
     ass = build_ass(words if clip.get("captions", True) else [], start, end, clip.get("hook", ""), clip.get("style", "bounce"),
                     clip.get("highlight_words", []), hook_y, cap_y)
     # The clip is made in a short work folder and moved into place afterwards. The caption step of ffmpeg cannot
